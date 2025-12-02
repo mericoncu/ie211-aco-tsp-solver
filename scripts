@@ -1,0 +1,410 @@
+import csv  # To read the coordinates from a CSV file
+import numpy as np  # For numerical calculations like distance matrices
+import random  # To randomly select cities for ant initialization
+import matplotlib.pyplot as plt  # To plot the tour and convergence graph
+from google.colab import files  # To upload files in Google Colab
+
+# Function to upload the coordinates file in Colab
+def upload_file():
+    """
+    Prompts the user to upload a file in the Google Colab environment.
+    Returns the name of the uploaded file.
+    """
+    print("Please upload your coordinates file:")  # Display upload prompt to the user.
+    uploaded = files.upload()  # Opens file upload dialog in Colab.
+    file_path = list(uploaded.keys())[0]  # Retrieves the uploaded file's name.
+    print(f"File uploaded successfully: {file_path}")  # Confirm successful upload.
+    return file_path  # Return the file path for further processing.
+
+
+
+# Ask the user to upload the coordinates file
+file_path = upload_file()  # File upload logic.
+
+
+
+
+# Function to load city coordinates from the input file
+def load_coordinates(file_path, delimiter=' ', encoding='utf-8-sig'):
+    """
+    Reads city coordinates from a file and stores them as a list of tuples.
+    Each tuple contains the city ID, x-coordinate, and y-coordinate.
+    """
+    data = []  # Initialize an empty list to store city data.
+    try:
+        with open(file_path, 'r', encoding=encoding) as file:  # Open the file for reading.
+            reader = csv.reader(file, delimiter=delimiter)  # Use the specified delimiter to read rows.
+            for row in reader:
+                if len(row) == 3:  # Only process rows with exactly three columns.
+                    try:
+                        city = int(row[0])  # Convert the first column to an integer (City ID).
+                        x = float(row[1])  # Convert the second column to a float (X-coordinate).
+                        y = float(row[2])  # Convert the third column to a float (Y-coordinate).
+                        data.append((city, x, y))  # Add the tuple (City ID, X, Y) to the list.
+                    except ValueError:
+                        # If a value can't be converted to the required type, skip the row.
+                        print(f"Skipping invalid row: {row}")
+                else:
+                    # Skip rows that don't have exactly three columns.
+                    print(f"Skipping malformed row: {row}")
+    except FileNotFoundError:
+        # Handle the case where the file is not found.
+        print(f"File not found: {file_path}")
+    except Exception as e:
+        # Catch any other errors that might occur during file reading.
+        print(f"An error occurred: {e}")
+    return data  # Return the list of city coordinates.
+
+# Load the city coordinates into the `data` list
+data = load_coordinates(file_path)  # Load the city data from the uploaded file.
+
+
+
+
+
+
+
+# Function to plot the best tour found by the algorithm
+def plot_tour(tour, coordinates, convergence=None, title="Shortest Tour"):
+    """
+    Visualizes the shortest tour by plotting the cities and optionally the convergence graph.
+    """
+    # Extract the coordinates of the cities in the order of the tour.
+    tour_coords = [coordinates[city][1:] for city in tour]  # Get x, y coordinates for each city in the tour.
+    x_coords, y_coords = zip(*tour_coords)  # Separate x and y coordinates into individual lists.
+
+    plt.figure(figsize=(14, 7))  # Create a figure with two subplots.
+
+    # Plot the tour in the first subplot.
+    plt.subplot(1, 2, 1)
+    plt.plot(x_coords, y_coords, '-o', label='Tour Path')  # Draw the tour path.
+    for i, (x, y) in enumerate(tour_coords[:-1]):  # Add city labels (indices) to each point.
+        plt.text(x, y, f"{i}", fontsize=8, color='red', ha='center', va='center')
+    plt.title(title)  # Set the title for the tour plot.
+    plt.xlabel("X Coordinate")  # Label for the x-axis.
+    plt.ylabel("Y Coordinate")  # Label for the y-axis.
+    plt.legend()  # Display the legend.
+    plt.grid(True)  # Add a grid for better visualization.
+
+    # Plot the convergence graph in the second subplot if convergence data is provided.
+    if convergence is not None:
+        plt.subplot(1, 2, 2)
+        plt.plot(range(len(convergence)), convergence, marker='o', linestyle='-', color='green', label='Convergence')
+        plt.title("Convergence Over Iterations")  # Set the title for the convergence plot.
+        plt.xlabel("Iteration")  # Label for the x-axis.
+        plt.ylabel("Best Tour Length")  # Label for the y-axis.
+        plt.legend()  # Display the legend.
+        plt.grid(True)  # Add a grid for better visualization.
+
+    plt.tight_layout()  # Adjust layout to avoid overlap between subplots.
+    plt.show()  # Display the plots.
+
+# Calculate the number of cities from the data
+num_cities = len(data)  # Total number of cities is the length of the data list.
+
+
+
+
+
+# Create a distance matrix where distances[i][j] is the distance between city i and city j.
+distances = np.zeros((num_cities, num_cities))  # Initialize a square matrix of zeros.
+for i in range(num_cities):  # Iterate over all cities as starting points.
+    for j in range(num_cities):  # Iterate over all cities as ending points.
+        if i != j:  # Skip calculating distance for a city to itself.
+            x1, y1 = data[i][1], data[i][2]  # Get coordinates of city i.
+            x2, y2 = data[j][1], data[j][2]  # Get coordinates of city j.
+            distances[i][j] = np.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)  # Calculate Euclidean distance.
+
+
+
+
+
+
+# Define the main parameters for the Ant Colony Optimization algorithm.
+ant_percentage = 0.01  # Percentage of ants relative to the number of cities.
+num_ants = max(1, int(num_cities * ant_percentage))  # Total number of ants, ensuring at least one.
+alpha = 1  # Influence of pheromones on decision-making (higher = more reliance on trails).
+beta = 40  # Influence of distances on decision-making (higher = prioritize shorter paths).
+rho = 0.1  # Pheromone evaporation rate (reduces pheromone levels each iteration).
+initial_pheromone = 1  # Initial pheromone level for all edges.
+iterations = 1000  # Number of iterations for the algorithm.
+pheromone = np.full((num_cities, num_cities), initial_pheromone)  # Initialize the pheromone matrix with default values.
+
+
+
+
+
+
+
+
+
+# Function to calculate probabilities for ant movement
+def calculate_probabilities(current_city, unvisited, pheromone, distances, alpha, beta):
+    """
+    Calculates the probabilities of moving to each unvisited city based on pheromone levels and distances.
+    """
+    unvisited = np.array(list(unvisited))  # Convert the set of unvisited cities to a NumPy array.
+    tau = np.clip(pheromone[current_city, unvisited] ** alpha, 1e-10, 1e10)  # Pheromone influence on probabilities.
+    eta = (1 / (distances[current_city, unvisited] + 1e-10)) ** beta  # Distance influence on probabilities.
+    probabilities = tau * eta  # Combine the influences of pheromones and distances.
+    probabilities /= probabilities.sum()  # Normalize probabilities to sum to 1.
+    return probabilities  # Return the calculated probabilities.
+
+
+
+
+
+
+
+
+
+
+
+# Function to construct a tour for a single ant
+def construct_tour(pheromone, distances, alpha, beta):
+    """
+    Constructs a tour for a single ant by probabilistically selecting cities to visit.
+    """
+    current_city = random.randint(0, num_cities - 1)  # Randomly select the starting city.
+    unvisited = set(range(num_cities))  # Initialize the set of unvisited cities.
+    unvisited.remove(current_city)  # Mark the starting city as visited.
+    tour = [current_city]  # Start the tour with the initial city.
+    total_distance = 0  # Initialize the total distance of the tour.
+
+    while unvisited:  # Continue until all cities are visited.
+        unvisited_list = np.array(list(unvisited))  # Convert the set of unvisited cities to a list.
+        probabilities = calculate_probabilities(current_city, unvisited, pheromone, distances, alpha, beta)  # Calculate probabilities for the next city.
+        next_city = np.random.choice(unvisited_list, p=probabilities)  # Select the next city based on probabilities.
+        total_distance += distances[current_city, next_city]  # Add the distance to the total distance.
+        tour.append(next_city)  # Append the selected city to the tour.
+        unvisited.remove(next_city)  # Mark the selected city as visited.
+        current_city = next_city  # Update the current city to the selected city.
+
+    total_distance += distances[current_city, tour[0]]  # Add the distance back to the starting city to complete the tour.
+    tour.append(tour[0])  # Append the starting city to the end to close the loop.
+    return tour, total_distance  # Return the completed tour and its total distance.
+
+
+
+
+
+
+
+
+
+# Function to create a candidate list for 2-opt optimization
+def create_candidate_list(num_cities, distances, k=20):
+    """
+    Creates a candidate list of the k nearest neighbors for each city.
+    This limits the search space during 2-opt optimization.
+    """
+    candidate_list = {}  # Initialize a dictionary to store the candidate list for each city.
+    for city in range(num_cities):  # Iterate over each city.
+        # Find the indices of the k nearest neighbors (excluding the city itself).
+        nearest_neighbors = np.argsort(distances[city])[:k + 1]
+        candidate_list[city] = [neighbor for neighbor in nearest_neighbors if neighbor != city]  # Exclude the city itself.
+    return candidate_list  # Return the candidate list.
+
+
+
+
+
+
+
+
+
+# Function to perform 2-opt optimization with early exit
+def local_search_2opt_with_early_exit(tour, distances, candidate_list):
+    """
+    Improves the given tour using the 2-opt algorithm, focusing only on candidate cities.
+    Stops early if no improvement is found.
+    """
+    improved = True  # Flag to indicate if improvements are being made.
+    best_distance = sum(distances[tour[i], tour[i + 1]] for i in range(len(tour) - 1))  # Calculate the initial tour distance.
+
+    while improved:  # Continue while improvements are being made.
+        improved = False  # Assume no improvement initially.
+        for i in range(1, len(tour) - 2):  # Iterate over each city in the tour.
+            for j in candidate_list[tour[i]]:  # Iterate over candidate neighbors for the current city.
+                if j <= i or j >= len(tour) - 1:  # Skip invalid swaps.
+                    continue
+                # Calculate the costs of the current and swapped edges.
+                old_cost = distances[tour[i], tour[i + 1]] + distances[tour[j], tour[(j + 1) % len(tour)]]
+                new_cost = distances[tour[i], tour[j]] + distances[tour[i + 1], tour[(j + 1) % len(tour)]]
+                if new_cost < old_cost:  # If the new cost is lower, apply the swap.
+                    # Reverse the segment between the two swapped cities.
+                    tour = tour[:i + 1] + tour[i + 1:j + 1][::-1] + tour[j + 1:]
+                    best_distance += new_cost - old_cost  # Update the best distance.
+                    improved = True  # Mark that an improvement was made.
+                    break  # Break out of the inner loop to restart optimization.
+    return tour, best_distance  # Return the improved tour and its distance.
+
+
+
+
+
+
+
+
+
+
+
+# Function to construct all tours for the current iteration
+def construct_all_tours(num_ants, pheromone, distances, alpha, beta, iteration, total_iterations, candidate_list):
+    """
+    Constructs tours for all ants in the current iteration.
+    Applies 2-opt optimization if the algorithm is in the later stages.
+    """
+    apply_local_search = iteration >= int(0.1 * total_iterations)  # Apply 2-opt optimization after the 10th iteration.
+    all_tours = []  # Initialize a list to store all tours and their distances.
+
+    for _ in range(num_ants):  # Loop through all ants.
+        tour, total_distance = construct_tour(pheromone, distances, alpha, beta)  # Construct a tour for each ant.
+        if apply_local_search:  # Apply 2-opt optimization if enabled.
+            tour, total_distance = local_search_2opt_with_early_exit(tour, distances, candidate_list)
+        all_tours.append((tour, total_distance))  # Add the tour and its distance to the list.
+    return all_tours  # Return the list of tours.
+
+
+
+
+
+
+
+
+
+
+# Function to update pheromones based on the tours
+def update_pheromones(pheromone, all_tours, rho, Q=100):
+    """
+    Updates the pheromone matrix based on the tours found by all ants.
+    Evaporates pheromones on all edges and adds pheromones to the edges in the tours.
+    """
+    pheromone *= (1 - rho)  # Evaporate a percentage of pheromones from all edges to prevent over-saturation.
+    for tour, total_distance in all_tours:  # Loop through each tour and its distance.
+        pheromone_contribution = Q / total_distance  # Contribution is inversely proportional to the tour's distance.
+        for i in range(len(tour) - 1):  # Add pheromones to all edges in the tour.
+            city_a = tour[i]
+            city_b = tour[i + 1]
+            pheromone[city_a][city_b] += pheromone_contribution  # Update pheromone for the forward edge.
+            pheromone[city_b][city_a] += pheromone_contribution  # Update pheromone for the reverse edge (undirected graph).
+
+
+
+
+
+
+
+
+
+# Function to run a single iteration of the ACO algorithm
+def run_iteration(num_ants, pheromone, distances, alpha, beta, rho, iteration, total_iterations, candidate_list, best_tour=None):
+    """
+    Runs one iteration of the ACO algorithm, constructing tours for all ants, applying local search,
+    and updating the pheromone matrix. Optionally incorporates the best tour as an elite contribution.
+    """
+    # Construct tours for all ants in the current iteration.
+    all_tours = construct_all_tours(num_ants, pheromone, distances, alpha, beta, iteration, total_iterations, candidate_list)
+    current_best_tour = min(all_tours, key=lambda x: x[1])  # Find the shortest tour from all tours.
+
+    # Update pheromones using all tours.
+    update_pheromones(pheromone, all_tours, rho)
+
+    # Optionally add elite pheromones from the globally best tour if available.
+    if best_tour is not None and isinstance(best_tour, tuple) and len(best_tour) == 2:
+        elite_tour, elite_distance = best_tour
+        for i in range(len(elite_tour) - 1):
+            city_a = elite_tour[i]
+            city_b = elite_tour[i + 1]
+            pheromone[city_a][city_b] += 10 / elite_distance  # Add extra pheromone for elite edges.
+            pheromone[city_b][city_a] += 10 / elite_distance
+
+    return current_best_tour  # Return the best tour found in this iteration.
+
+
+
+
+
+
+
+
+
+
+# Main function to run the entire ACO algorithm
+def run_aco(num_cities, num_ants, distances, alpha, beta, rho, iterations, initial_pheromone):
+    """
+    Runs the full Ant Colony Optimization (ACO) algorithm to find the shortest tour.
+    """
+    # Initialize the pheromone matrix with the initial pheromone value.
+    pheromone = np.full((num_cities, num_cities), float(initial_pheromone))
+    candidate_list = create_candidate_list(num_cities, distances)  # Generate candidate lists for 2-opt optimization.
+    global_best_tour = None  # Track the globally best tour.
+    global_best_distance = float('inf')  # Track the shortest distance globally.
+    best_iteration = 0  # Track the iteration at which the global best distance was found.
+    convergence = []  # Track the best distance per iteration for convergence plotting.
+
+    for iteration in range(iterations):  # Loop for the specified number of iterations.
+        # Dynamically adjust alpha and beta to balance exploration and exploitation over iterations.
+        alpha = 1 + (4 * iteration / iterations)  # Increase pheromone influence over time.
+        beta = 40 - (10 * iteration / iterations)  # Decrease distance influence over time.
+
+        # Periodically reset pheromone levels to avoid algorithm stagnation.
+        if iteration % 400 == 0 and iteration > 0:
+            pheromone.fill(initial_pheromone)
+            print(f"Pheromone reset at iteration {iteration}.")
+
+        # Run a single iteration of the algorithm.
+        best_tour = run_iteration(num_ants, pheromone, distances, alpha, beta, rho, iteration, iterations, candidate_list, global_best_tour)
+
+        # Update the global best tour if the current best is better.
+        if best_tour[1] < global_best_distance:
+            global_best_tour = (best_tour[0], best_tour[1])  # Store the best tour and its distance.
+            global_best_distance = best_tour[1]
+            best_iteration = iteration + 1  # Record the iteration when the global best was found.
+
+        # Append the current global best distance to the convergence list.
+        convergence.append(global_best_distance)
+
+        # Print progress every 100 iterations or at the final iteration.
+        if (iteration + 1) % 100 == 0 or iteration == iterations - 1:
+            print(f"Iteration {iteration + 1}/{iterations}: Best distance so far = {global_best_distance:.2f}")
+
+    # Return the global best tour, its distance, the iteration it was found, and the convergence data.
+    return global_best_tour, global_best_distance, best_iteration, convergence
+
+
+
+# Run the ACO algorithm with the given parameters
+global_best_tour, global_best_distance, best_iteration, convergence = run_aco(
+    num_cities=num_cities,  # Total number of cities.
+    num_ants=num_ants,  # Total number of ants.
+    distances=distances,  # Precomputed distance matrix.
+    alpha=alpha,  # Initial pheromone influence parameter.
+    beta=beta,  # Initial distance influence parameter.
+    rho=rho,  # Pheromone evaporation rate.
+    iterations=iterations,  # Total number of iterations.
+    initial_pheromone=initial_pheromone  # Initial pheromone level for all edges.
+)
+
+
+
+
+# Print the final results
+print(f"\nGlobal Best Distance: {global_best_distance:.2f}")  # Output the shortest distance found.
+print(f"Best Distance Found at Iteration: {best_iteration}")  # Output the iteration when the best distance was found.
+
+
+# Save the results to a text file
+output_file = "best_tour_results.txt"  # Output file name.
+with open(output_file, "w") as file:
+    # Write the global best distance and the best tour to the file.
+    file.write(f"Global Best Distance: {global_best_distance:.2f}\n")
+    file.write("Best Tour:\n")
+    file.write(" -> ".join(map(str, global_best_tour[0])) + "\n")
+
+
+print(f"Results saved to {output_file}")  # Confirm that the results were saved.
+
+
+# Plot the best tour and the convergence graph
+plot_tour(global_best_tour[0], data, convergence, title="Shortest Tour Found by ACO")  # Visualize the results.
